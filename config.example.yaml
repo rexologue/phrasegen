@@ -1,0 +1,253 @@
+# Пример полного конфига для генератора.
+# Все пути в конфиге, если они относительные, считаются от папки этого YAML-файла.
+
+run:
+  # Человекочитаемое имя запуска. Попадает в report.json и meta каждой принятой записи.
+  name: "demo_openai_compatible_generation"
+
+  # Seed для sampling-а diversity. Не управляет случайностью модели на стороне API.
+  random_seed: 42
+
+  # true: продолжить по существующим per_rule/*.jsonl и восстановить dedup-state.
+  # false: очистить dataset.jsonl и per_rule-файлы перед запуском.
+  resume: true
+
+  # Сколько prompt-запросов строить за один цикл для каждого rule.
+  # Реальное параллельное выполнение также ограничено api.concurrency.
+  prompts_per_cycle: 4
+
+  # Защита от бесконечного rule: максимум API-запросов на один rule.
+  max_requests_per_rule: 10000
+
+  # Защита от слишком строгих checks: сколько циклов подряд можно не принять ни одной строки.
+  max_consecutive_empty_cycles: 50
+
+api:
+  # Любой OpenAI-compatible endpoint. Итоговый URL = base_url + endpoint.
+  base_url: "https://api.example.com/v1"
+  endpoint: "/chat/completions"
+
+  # Имя модели как его ожидает ваш API.
+  model: "example-model"
+
+  # Переменная окружения с ключом. Если API локальный и ключ не нужен, можно убрать.
+  api_key_env: "OPENAI_API_KEY"
+
+  # Можно задать ключ прямо здесь, но обычно это хуже, чем api_key_env.
+  api_key: null
+
+  # HTTP timeout одного запроса.
+  timeout_sec: 120
+
+  # Повторы после сетевых/HTTP/parse ошибок API.
+  max_retries: 3
+  retry_sleep_sec: 2
+
+  # Максимум одновременных HTTP-запросов.
+  concurrency: 4
+
+  # Дополнительные HTTP headers, если нужны вашему провайдеру.
+  headers: {}
+
+sampling:
+  # Эти поля передаются в тело OpenAI-compatible chat completions request.
+  temperature: 0.9
+  top_p: 0.9
+  max_tokens: 512
+  presence_penalty: null
+  frequency_penalty: null
+  stop: []
+
+  # Любые дополнительные поля тела запроса: seed, top_k, min_p и т.п.,
+  # если конкретный endpoint их поддерживает.
+  extra_body: {}
+
+output:
+  # Папка артефактов запуска.
+  base_dir: "./out/demo"
+
+  # Буферизация JSONL-записи.
+  flush_every: 100
+
+  # Один mutable JSON-report вместо отдельных stats/manifest.
+  report_filename: "report.json"
+
+  # Общий датасет всех rule.
+  dataset_filename: "dataset.jsonl"
+
+  # Отдельные датасеты по каждому rule.
+  per_rule_dir: "per_rule"
+
+  # Сколько примеров отказов хранить в report.json на каждый rule.
+  rejection_sample_limit_per_rule: 100
+
+parser:
+  # json_array: модель должна вернуть JSON array of strings.
+  # answer_tags: модель возвращает <answer>...</answer>.
+  # lines: каждая непустая строка считается кандидатом.
+  type: "json_array"
+
+prompts:
+  # Все prompt-шаблоны можно задать inline, как ниже, или через *_path.
+  # Доступные переменные user_template:
+  # {rule_id}, {batch_size}, {goal}, {positive_examples}, {negative_examples},
+  # {checks}, {diversity}, {output_contract}.
+  system_template: |
+    Ты генератор текстовых датасетов.
+    Следуй пользовательскому заданию строго и возвращай только требуемый формат.
+
+  user_template: |
+    Сгенерируй {batch_size} уникальных текстов для rule "{rule_id}".
+
+    Цель:
+    {goal}
+
+    Хорошие примеры:
+    {positive_examples}
+
+    Плохие примеры:
+    {negative_examples}
+
+    Обязательные проверки для принимаемого текста:
+    {checks}
+
+    Контекст разнообразия для этого запроса:
+    {diversity}
+
+    {output_contract}
+
+  output_contract_template: |
+    Верни только валидный JSON-массив строк.
+    Не добавляй markdown, пояснения, ключи объектов или комментарии.
+
+diversity_profiles:
+  # Diversity не валидирует результат. Он только дает prompt-у разные контексты.
+  business_ru:
+    dimensions:
+      scenario:
+        - "сообщение в рабочем чате"
+        - "короткий звонок клиенту"
+        - "внутренняя заметка"
+        - "обсуждение задачи"
+      intent:
+        - "уточнить"
+        - "подтвердить"
+        - "напомнить"
+        - "согласовать"
+      style:
+        - "нейтральный"
+        - "деловой"
+        - "разговорный"
+      tone:
+        - "спокойно"
+        - "вежливо"
+        - "уверенно"
+    sample:
+      scenario: 2
+      intent: 1
+      style: 1
+      tone: 1
+
+dedup_profiles:
+  # Dedup-profile можно переиспользовать между rule.
+  smart_text:
+    # rule: уникальность проверяется внутри каждого rule.
+    # global: уникальность проверяется между всеми rule, использующими этот profile.
+    scope: "rule"
+
+    # Точное совпадение после normalization.
+    exact: true
+
+    normalization:
+      lowercase: true
+      collapse_spaces: true
+      trim_punctuation: true
+      replace_yo: true
+
+    prefix_limit:
+      enabled: true
+      words: 4
+      max_count: 8
+
+    ngram_similarity:
+      enabled: true
+      ngram: 3
+      threshold: 0.88
+      max_compare: 1000
+
+callbacks:
+  # Глобальные callbacks применяются ко всем rules.
+  # Контракт pre_extension: def fn(prompt: str) -> str
+  pre_extension: []
+
+  # Контракт post_validation: def fn(text: str) -> tuple[bool, str]
+  post_validation: []
+
+rules:
+  - id: "crm_mentions"
+    count: 2000
+    batch_size: 16
+    diversity_profile: "business_ru"
+    dedup_profile: "smart_text"
+    goal: "Короткие естественные русские фразы с обязательным упоминанием CRM."
+
+    examples:
+      positive:
+        - "Проверь, появился ли лид в CRM после звонка."
+        - "Оставь комментарий в CRM и дай мне знать."
+      negative:
+        - "CRM"
+        - "Сгенерируй фразу с CRM."
+
+    checks:
+      - type: "word_count_between"
+        min: 4
+        max: 14
+
+      - type: "require_contains_any"
+        values:
+          - "CRM"
+        case_sensitive: true
+
+      - type: "russian_text"
+        min_cyrillic_chars: 8
+        max_latin_chars: 0
+        allow_latin_inside:
+          - "CRM"
+
+      - type: "not_instruction_echo"
+
+    callbacks:
+      pre_extension:
+        - path: "./examples/callbacks.py"
+          function: "add_workplace_hint"
+      post_validation:
+        - path: "./examples/callbacks.py"
+          function: "reject_placeholder_text"
+
+  - id: "numeric_phrases"
+    count: 500
+    batch_size: 12
+    diversity_profile: "business_ru"
+    dedup_profile: "smart_text"
+    goal: "Короткие русские фразы, в которых есть хотя бы одна цифра или числовой формат."
+
+    examples:
+      positive:
+        - "Поставь созвон на 15:30, если всем удобно."
+        - "Мы работаем 24/7, поэтому заявку можно оставить ночью."
+      negative:
+        - "Поставь созвон на завтра."
+
+    checks:
+      - type: "word_count_between"
+        min: 4
+        max: 18
+
+      - type: "require_digits"
+
+      - type: "russian_text"
+        min_cyrillic_chars: 8
+        max_latin_chars: 0
+
+      - type: "not_instruction_echo"
