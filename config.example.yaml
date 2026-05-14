@@ -177,10 +177,14 @@ dedup_profiles:
 
 callbacks:
   # Глобальные callbacks применяются ко всем rules.
-  # Контракт pre_extension: def fn(prompt: str) -> str
+  # Контракт pre_extension:
+  # - без anchor: def fn(prompt: str) -> str
+  # - с anchor: def fn(prompt: str) -> tuple[str, str]
   pre_extension: []
 
-  # Контракт post_validation: def fn(text: str) -> tuple[bool, str]
+  # Контракт post_validation:
+  # - без anchor: def fn(text: str) -> tuple[bool, str]
+  # - с anchor: def fn(text: str, anchor: str) -> tuple[bool, str]
   post_validation: []
 
 rules:

@@ -1,0 +1,120 @@
+run:
+  name: "phone_extraction_wrapping"
+  random_seed: 42
+  resume: true
+  prompts_per_cycle: 4
+  max_requests_per_rule: 20000
+  max_consecutive_empty_cycles: 100
+
+api:
+  base_url: "https://api.example.com/v1"
+  endpoint: "/chat/completions"
+  model: "example-model"
+  api_key_env: "OPENAI_API_KEY"
+  timeout_sec: 120
+  max_retries: 3
+  retry_sleep_sec: 2
+  concurrency: 4
+  headers: {}
+
+sampling:
+  temperature: 0.8
+  top_p: 0.9
+  max_tokens: 700
+  stop: []
+  extra_body: {}
+
+output:
+  base_dir: "./out"
+  flush_every: 50
+  report_filename: "report.json"
+  dataset_filename: "dataset.jsonl"
+  per_rule_dir: "per_rule"
+  rejection_sample_limit_per_rule: 200
+
+parser:
+  type: "json_array"
+
+prompts:
+  system_template_path: "./prompts/system.md"
+  user_template_path: "./prompts/user.md"
+  output_contract_template: |
+    Верни только валидный JSON-массив ровно из одной строки.
+    Не добавляй markdown, JSON-объекты, пояснения или комментарии.
+
+diversity_profiles:
+  phone_capture_ru:
+    dimensions:
+      transcript_shape:
+        - "одна реплика клиента"
+        - "клиент диктует номер с паузами"
+        - "ассистент коротко подтверждает между частями"
+        - "номер разбит на несколько реплик клиента"
+      noise_level:
+        - "минимальный шум"
+        - "умеренные междометия"
+        - "служебные слова вокруг диктовки"
+      assistant_style:
+        - "записываю"
+        - "угу"
+        - "повторите дальше"
+        - "хорошо"
+    sample:
+      transcript_shape: 1
+      noise_level: 1
+      assistant_style: 1
+
+dedup_profiles:
+  transcript_text:
+    scope: "rule"
+    exact: true
+    normalization:
+      lowercase: true
+      collapse_spaces: true
+      trim_punctuation: true
+      replace_yo: true
+    prefix_limit:
+      enabled: false
+      words: 4
+      max_count: 100000
+    ngram_similarity:
+      enabled: false
+      ngram: 3
+      threshold: 0.95
+      max_compare: 1000
+
+callbacks:
+  pre_extension: []
+  post_validation: []
+
+rules:
+  - id: "phone_capture_wrapped"
+    # Для N номеров build_cases.py создаст 11*N вариантов:
+    # 1 полный идеальный + 5 полных шумных + 5 неполных.
+    # Если count больше числа вариантов, callback пойдет по cases по кругу.
+    count: 110
+    batch_size: 1
+    diversity_profile: "phone_capture_ru"
+    dedup_profile: "transcript_text"
+    goal: "Обернуть заданную диктовку российского телефонного номера в реалистичное окно PHONE_CAPTURE."
+
+    examples:
+      positive:
+        - "Клиент: записывайте, восемь девятьсот двадцать один семьсот двенадцать ноль три ноль пять, все."
+        - "Ассистент: говорите. Клиент: плюс семь девятьсот четырнадцать, так секунду, триста одиннадцать сорок восемнадцать."
+      negative:
+        - "89143114818"
+        - "Клиент продиктовал номер правильно."
+
+    checks:
+      - type: "char_count_between"
+        min: 20
+        max: 3000
+
+    callbacks:
+      pre_extension:
+        - path: "./callbacks.py"
+          function: "inject_phone_case"
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_phone_case_output"

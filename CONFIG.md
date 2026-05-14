@@ -260,7 +260,22 @@ prompts:
 
 Если задан `*_path`, он имеет приоритет над inline-значением.
 
-Доступные переменные `user_template`:
+### user_template
+
+`user_template` — основной шаблон пользовательского сообщения, которое уйдет
+в модель как message с ролью `user`.
+
+Шаблон рендерится ядром через Python `str.format(...)`. Это значит:
+
+- все placeholders пишутся в фигурных скобках: `{goal}`;
+- неизвестный placeholder вызовет ошибку запуска;
+- если в prompt нужен буквальный символ `{` или `}`, его надо экранировать:
+  `{{` и `}}`;
+- phone-specific, domain-specific и runtime payload не должны попадать сюда
+  напрямую, если ядро о них не знает. Для этого используется `pre_extension`
+  callback.
+
+Доступные placeholders:
 
 - `{rule_id}` — `rule.id`
 - `{batch_size}` — `rule.batch_size`
@@ -270,6 +285,60 @@ prompts:
 - `{checks}` — bullet list описаний built-in checks
 - `{diversity}` — bullet list sampled diversity context
 - `{output_contract}` — rendered `output_contract_template`
+
+Порядок сборки prompt-а:
+
+```text
+system_template
+user_template
+  -> ядро подставляет placeholders
+  -> ядро добавляет rendered output_contract через {output_contract}
+  -> pre_extension callbacks могут изменить готовый user prompt
+  -> system + user отправляются в API
+```
+
+Разделение ответственности:
+
+- `user_template` отвечает за общий способ постановки задачи модели;
+- `rule.goal` отвечает за смысл конкретной категории;
+- `rule.examples` показывают хорошие и плохие результаты;
+- `rule.checks` превращаются в текстовое описание жестких проверок;
+- `diversity` добавляет случайный контекст, но не валидирует результат;
+- `output_contract_template` описывает формат ответа модели;
+- `pre_extension` добавляет runtime payload: конкретный номер, case, fragment,
+  внешний контекст из файла и т.п.
+
+Минимальный пример:
+
+```text
+Сгенерируй {batch_size} текстов для rule "{rule_id}".
+
+Цель:
+{goal}
+
+Хорошие примеры:
+{positive_examples}
+
+Проверки:
+{checks}
+
+{output_contract}
+```
+
+Для `phone_extraction` конкретный номер не находится в `user_template`.
+Сначала ядро заполняет общий шаблон, а затем callback `inject_phone_case`
+добавляет блок вида:
+
+```text
+PHONE_EXTRACTION_CASE
+case_id: ...
+expected_extraction_result: ...
+Source dictation to preserve exactly:
+<<<...>>>
+```
+
+Это сделано специально: один и тот же шаблон можно переиспользовать, а
+конкретные варианты брать из внешнего `cases.jsonl` во время генерации.
 
 Дефолтный output contract просит JSON array of strings.
 Это можно override-нуть, но parser должен соответствовать contract-у.
@@ -419,28 +488,45 @@ Global callbacks выполняются перед rule-level callbacks.
 
 ### PreExtensionCallback
 
-Контракт:
+Контракт без anchor:
 
 ```python
 def callback(prompt: str) -> str:
     return prompt
 ```
 
+Контракт с anchor:
+
+```python
+def callback(prompt: str) -> tuple[str, str]:
+    return prompt, "case_id"
+```
+
 Назначение: изменить уже отрендеренный user prompt перед API-вызовом.
+Anchor нужен, когда pre-callback выбирает внешний payload, а post-callback
+должен проверить именно этот payload.
 
 Ограничения:
 
 - принимает ровно prompt text;
-- возвращает prompt text;
+- возвращает prompt text или пару `(prompt text, anchor)`;
 - не получает rule/config/context;
-- если возвращает не `str`, engine падает с ошибкой callback-а.
+- если возвращает неправильный тип, engine падает с ошибкой callback-а;
+- за один prompt поддерживается только один distinct anchor.
 
 ### PostValidationCallback
 
-Контракт:
+Контракт без anchor:
 
 ```python
 def callback(text: str) -> tuple[bool, str]:
+    return True, ""
+```
+
+Контракт с anchor:
+
+```python
+def callback(text: str, anchor: str) -> tuple[bool, str]:
     return True, ""
 ```
 
@@ -451,6 +537,10 @@ def callback(text: str) -> tuple[bool, str]:
 - `True, ""` — принять и идти дальше к dedup;
 - `False, "reason"` — отклонить с причиной;
 - reason должен быть короткой machine-readable строкой.
+- если pre-callback вернул anchor, engine вызовет post-callback как
+  `callback(text, anchor)`;
+- если pre-callback не вернул anchor, engine вызовет post-callback как
+  `callback(text)`.
 
 ## rules
 
@@ -804,6 +894,7 @@ Rule statuses:
       "scenario": ["сообщение в рабочем чате"],
       "style": ["деловой"]
     },
+    "callback_anchor": null,
     "callbacks": {
       "pre_extension": [
         {
@@ -848,6 +939,9 @@ Fields:
 
 - `meta.diversity`  
   Sampled diversity context for the prompt that produced the text.
+
+- `meta.callback_anchor`  
+  Anchor returned by pre-callback, or `null`.
 
 - `meta.callbacks`  
   Callback specs applied to the prompt/text.

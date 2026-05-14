@@ -75,12 +75,12 @@ python generate.py --config config.example.yaml
    - описаний `rule.checks`;
    - sampled diversity;
    - `output_contract_template`.
-7. Применяет `PreExtensionCallback`: `prompt: str -> prompt: str`.
+7. Применяет `PreExtensionCallback`: `prompt -> prompt` или `prompt -> (prompt, anchor)`.
 8. Отправляет `system + user` messages в OpenAI-compatible API.
 9. Парсит ответ модели выбранным parser-ом.
 10. Для каждого кандидата:
     - прогоняет built-in checks;
-    - прогоняет `PostValidationCallback`: `text: str -> tuple[bool, str]`;
+    - прогоняет `PostValidationCallback`: `text -> tuple[bool, str]` или `text, anchor -> tuple[bool, str]`;
     - прогоняет dedup;
     - пишет accepted record в общий `dataset.jsonl`;
     - пишет accepted record в `per_rule/<rule_id>.jsonl`;
@@ -137,6 +137,14 @@ def my_pre_extension(prompt: str) -> str:
     return prompt + "\nAdditional instruction."
 ```
 
+Pre-extension with anchor:
+
+```python
+def my_pre_extension(prompt: str) -> tuple[str, str]:
+    case_id = "case_001"
+    return prompt + "\nUse case_001.", case_id
+```
+
 Post-validation:
 
 ```python
@@ -146,9 +154,17 @@ def my_post_validation(text: str) -> tuple[bool, str]:
     return True, ""
 ```
 
-Callbacks deliberately stateless. Если нужна сложная stateful-логика с payload,
-ее лучше сначала выразить через prompt/checks. Stateful hooks можно добавить
-отдельным контрактом позже, не ломая базовую схему.
+Post-validation with anchor:
+
+```python
+def my_post_validation(text: str, anchor: str) -> tuple[bool, str]:
+    if anchor not in text:
+        return False, "anchor_missing"
+    return True, ""
+```
+
+Если pre-callback возвращает anchor, post-callbacks в этой rule должны принимать
+`text, anchor`. Anchor сохраняется в `meta.callback_anchor`.
 
 ## Почему JSON Array По Умолчанию
 
@@ -170,6 +186,7 @@ Default parser — `json_array`, поэтому модель просится в
 
 - все top-level поля;
 - все поля `run`, `api`, `sampling`, `output`, `parser`, `prompts`;
+- структура `user_template`, доступные placeholders и порядок рендера;
 - `diversity_profiles`;
 - `dedup_profiles`;
 - rule schema;

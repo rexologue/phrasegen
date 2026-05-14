@@ -1430,4 +1430,4 @@ erl_crash.dump
 !include
 
 # Example outputs
-demo_output/
+*output/

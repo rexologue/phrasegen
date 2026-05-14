@@ -28,6 +28,7 @@ class PromptRequest:
     request_index: int
     prompt: RenderedPrompt
     user_prompt_after_callbacks: str
+    callback_anchor: str | None
     callbacks_report: dict[str, list[dict[str, str]]]
 
 
@@ -169,13 +170,14 @@ class GenerationRunner:
                 check_descriptions=check_runner.describe(),
                 diversity=diversity,
             )
-            user_prompt_after_callbacks = pre_chain.apply(rendered.user)
+            pre_result = pre_chain.apply(rendered.user)
             prompt_requests.append(
                 PromptRequest(
                     rule=rule,
                     request_index=start_request_index + offset + 1,
                     prompt=rendered,
-                    user_prompt_after_callbacks=user_prompt_after_callbacks,
+                    user_prompt_after_callbacks=pre_result.prompt,
+                    callback_anchor=pre_result.anchor,
                     callbacks_report=callbacks_report,
                 )
             )
@@ -262,7 +264,7 @@ class GenerationRunner:
             self._record_rejection(rule.id, check_result.reason, {"text": text})
             return
         try:
-            post_result = post_chain.validate(text)
+            post_result = post_chain.validate(text, request.callback_anchor)
         except Exception as exc:
             self._record_error(rule.id, "post_validation_callback_error", str(exc))
             self._record_rejection(rule.id, "post_validation_callback_error", {"text": text, "error": str(exc)})
@@ -301,6 +303,7 @@ class GenerationRunner:
                 "candidate_index": candidate_index,
                 "parser": self.parser.name,
                 "diversity": request.prompt.diversity,
+                "callback_anchor": request.callback_anchor,
                 "callbacks": request.callbacks_report,
             },
         }
