@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 
+from tqdm import tqdm
+
 from phrasegen.api.client import ChatMessage, OpenAICompatibleClient
 from phrasegen.callbacks.contracts import PostValidationChain, PreExtensionChain
 from phrasegen.callbacks.loader import CallbackLoader
@@ -97,42 +99,53 @@ class GenerationRunner:
         request_index = rule_report.api_requests
         consecutive_empty_cycles = 0
 
-        while rule_report.accepted < rule.count:
-            if request_index >= self.config.run.max_requests_per_rule:
-                rule_report.status = "request_limit_reached"
-                break
-            prompt_requests = self._build_prompt_requests(
-                rule=rule,
-                check_runner=check_runner,
-                pre_chain=pre_chain,
-                callbacks_report=callbacks_report,
-                diversity_sampler=diversity_sampler,
-                start_request_index=request_index,
-            )
-            if not prompt_requests:
-                rule_report.errors["no_prompt_requests"] += 1
-                break
-            request_index += len(prompt_requests)
-            accepted_before = rule_report.accepted
-            self._execute_prompt_requests(
-                prompt_requests=prompt_requests,
-                parser=self.parser,
-                check_runner=check_runner,
-                post_chain=post_chain,
-                dataset_writer=dataset_writer,
-                per_rule_writer=per_rule_writer,
-            )
-            dataset_writer.flush()
-            per_rule_writer.flush()
-            rule_report.updated_at_unix = time.time()
-            self.report.touch()
-            if rule_report.accepted == accepted_before:
-                consecutive_empty_cycles += 1
-            else:
-                consecutive_empty_cycles = 0
-            if consecutive_empty_cycles >= self.config.run.max_consecutive_empty_cycles:
-                rule_report.status = "empty_cycle_limit_reached"
-                break
+        with tqdm(
+            total=rule.count,
+            initial=min(rule_report.accepted, rule.count),
+            desc=rule.id,
+            unit="phr",
+            dynamic_ncols=True,
+        ) as progress:
+            self._update_progress_postfix(progress, rule_report)
+            while rule_report.accepted < rule.count:
+                if request_index >= self.config.run.max_requests_per_rule:
+                    rule_report.status = "request_limit_reached"
+                    break
+                prompt_requests = self._build_prompt_requests(
+                    rule=rule,
+                    check_runner=check_runner,
+                    pre_chain=pre_chain,
+                    callbacks_report=callbacks_report,
+                    diversity_sampler=diversity_sampler,
+                    start_request_index=request_index,
+                )
+                if not prompt_requests:
+                    rule_report.errors["no_prompt_requests"] += 1
+                    self._update_progress_postfix(progress, rule_report)
+                    break
+                request_index += len(prompt_requests)
+                accepted_before = rule_report.accepted
+                self._execute_prompt_requests(
+                    prompt_requests=prompt_requests,
+                    parser=self.parser,
+                    check_runner=check_runner,
+                    post_chain=post_chain,
+                    dataset_writer=dataset_writer,
+                    per_rule_writer=per_rule_writer,
+                )
+                dataset_writer.flush()
+                per_rule_writer.flush()
+                rule_report.updated_at_unix = time.time()
+                self.report.touch()
+                progress.update(max(rule_report.accepted - accepted_before, 0))
+                self._update_progress_postfix(progress, rule_report)
+                if rule_report.accepted == accepted_before:
+                    consecutive_empty_cycles += 1
+                else:
+                    consecutive_empty_cycles = 0
+                if consecutive_empty_cycles >= self.config.run.max_consecutive_empty_cycles:
+                    rule_report.status = "empty_cycle_limit_reached"
+                    break
 
         dataset_writer.flush()
         per_rule_writer.flush()
@@ -346,6 +359,16 @@ class GenerationRunner:
         rule_report = self.report.rules[rule_id]
         rule_report.errors[error_type] += 1
         self.report.add_rejection_sample(rule_id, {"reason": error_type, "error": error})
+
+    def _update_progress_postfix(self, progress: Any, rule_report: Any) -> None:
+        """Refresh tqdm counters for the current rule."""
+        progress.set_postfix(
+            acc=rule_report.accepted,
+            rej=sum(rule_report.rejected.values()),
+            err=sum(rule_report.errors.values()),
+            api=rule_report.api_requests,
+            refresh=True,
+        )
 
     def _rule_path(self, rule: RuleConfig) -> Any:
         """Return the per-rule JSONL path."""

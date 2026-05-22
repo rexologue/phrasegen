@@ -1,0 +1,324 @@
+run:
+  name: "whats_app_tts_phrases"
+  random_seed: 42
+  resume: true
+  prompts_per_cycle: 4
+  max_requests_per_rule: 20000
+  max_consecutive_empty_cycles: 120
+
+api:
+  base_url: "https://api.example.com/v1"
+  endpoint: "/chat/completions"
+  model: "example-model"
+  api_key_env: "OPENAI_API_KEY"
+  timeout_sec: 120
+  max_retries: 3
+  retry_sleep_sec: 2
+  concurrency: 4
+  headers: {}
+
+sampling:
+  temperature: 0.85
+  top_p: 0.9
+  max_tokens: 900
+  stop: []
+  extra_body: {}
+
+output:
+  base_dir: "./out"
+  flush_every: 100
+  report_filename: "report.json"
+  dataset_filename: "dataset.jsonl"
+  per_rule_dir: "per_rule"
+  rejection_sample_limit_per_rule: 200
+
+parser:
+  type: "json_array"
+
+prompts:
+  system_template_path: "./prompts/system.md"
+  user_template_path: "./prompts/user.md"
+  output_contract_template: |
+    Верни только валидный JSON-массив строк.
+    Не добавляй markdown, JSON-объекты, ключи, пояснения или комментарии.
+
+diversity_profiles:
+  work_tts_ru:
+    dimensions:
+      scenario:
+        - "обработка заявки"
+        - "работа с клиентским чатом"
+        - "настройка интеграции"
+        - "контроль сделки"
+        - "передача задачи менеджеру"
+        - "уведомление о статусе"
+        - "поддержка клиента"
+        - "согласование процесса продаж"
+        - "автоматизация коммуникаций"
+        - "разбор обращения"
+      intent:
+        - "уточнить"
+        - "попросить"
+        - "подтвердить"
+        - "напомнить"
+        - "объяснить"
+        - "предупредить"
+        - "согласовать"
+        - "проверить"
+      role_context:
+        - "менеджер по продажам"
+        - "оператор поддержки"
+        - "руководитель отдела"
+        - "интегратор"
+        - "аналитик"
+        - "администратор CRM"
+      syntax_shape:
+        - "короткое утверждение"
+        - "естественный вопрос"
+        - "мягкая просьба"
+        - "рабочее напоминание"
+        - "спокойное пояснение"
+      wording:
+        - "разговорная рабочая речь"
+        - "нейтральная деловая речь"
+        - "простая фраза без канцелярита"
+        - "фраза для голосового ассистента"
+    sample:
+      scenario: 2
+      intent: 1
+      role_context: 1
+      syntax_shape: 1
+      wording: 1
+
+dedup_profiles:
+  tts_phrase_global:
+    scope: "global"
+    exact: true
+    normalization:
+      lowercase: true
+      collapse_spaces: true
+      trim_punctuation: true
+      replace_yo: true
+    prefix_limit:
+      enabled: true
+      words: 5
+      max_count: 5
+    ngram_similarity:
+      enabled: true
+      ngram: 3
+      threshold: 0.86
+      max_compare: 3000
+
+callbacks:
+  pre_extension: []
+  post_validation: []
+
+rules:
+  - id: "ai_mop_phrases"
+    count: 10000
+    batch_size: 20
+    diversity_profile: "work_tts_ru"
+    dedup_profile: "tts_phrase_global"
+    goal: "Естественные русские TTS-фразы про рабочие коммуникации, продажи, CRM или поддержку с обязательным точным упоминанием АИ МОП."
+    examples:
+      positive:
+        - "Проверь, передал ли АИ МОП новую заявку ответственному менеджеру."
+        - "АИ МОП может напомнить оператору о клиенте перед повторным звонком."
+      negative:
+        - "АИ МОП."
+        - "На лугу рос одуванчик, а рядом был АИ МОП."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["АИ МОП"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_ai_mop_phrase"
+
+  - id: "amocrm_phrases"
+    count: 10000
+    batch_size: 20
+    diversity_profile: "work_tts_ru"
+    dedup_profile: "tts_phrase_global"
+    goal: "Естественные русские TTS-фразы про рабочие коммуникации, продажи, CRM или поддержку с обязательным точным упоминанием AmoCRM."
+    examples:
+      positive:
+        - "Проверь, появилась ли новая сделка в AmoCRM после обращения клиента."
+        - "Менеджеру нужно обновить статус в AmoCRM до конца смены."
+      negative:
+        - "amo crm помогает."
+        - "На кухне стояла чашка, и там была AmoCRM."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["AmoCRM"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+        allow_latin_inside: ["AmoCRM"]
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_amocrm_phrase"
+
+  - id: "bitrix_phrases"
+    count: 10000
+    batch_size: 20
+    diversity_profile: "work_tts_ru"
+    dedup_profile: "tts_phrase_global"
+    goal: "Естественные русские TTS-фразы про рабочие коммуникации, продажи, CRM или поддержку с обязательным точным упоминанием Bitrix."
+    examples:
+      positive:
+        - "Попроси менеджера проверить задачу в Bitrix перед встречей с клиентом."
+        - "После звонка нужно сохранить комментарий в Bitrix и закрыть обращение."
+      negative:
+        - "Битрикс уже рядом."
+        - "В саду расцвел цветок, и Bitrix стал ярче."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["Bitrix"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+        allow_latin_inside: ["Bitrix"]
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_bitrix_phrase"
+
+  - id: "api_phrases"
+    count: 10000
+    batch_size: 20
+    diversity_profile: "work_tts_ru"
+    dedup_profile: "tts_phrase_global"
+    goal: "Естественные русские TTS-фразы про рабочие интеграции, обмен данными, CRM или поддержку с обязательным точным упоминанием API."
+    examples:
+      positive:
+        - "Проверь, отправляет ли API новые заявки в систему без задержки."
+        - "Через API можно передать статус сделки в соседний сервис."
+      negative:
+        - "api работает."
+        - "Пирожок лежал на столе, а рядом был API."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["API"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+        allow_latin_inside: ["API"]
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_api_phrase"
+
+  - id: "whatsapp_phrases"
+    count: 10000
+    batch_size: 20
+    diversity_profile: "work_tts_ru"
+    dedup_profile: "tts_phrase_global"
+    goal: "Естественные русские TTS-фразы про рабочие коммуникации, продажи, CRM или поддержку с обязательным точным упоминанием WhatsApp."
+    examples:
+      positive:
+        - "Отправь клиенту короткое напоминание в WhatsApp после подтверждения заявки."
+        - "Проверь, дошло ли сообщение в WhatsApp до ответственного менеджера."
+      negative:
+        - "ватсап удобный."
+        - "Одуванчик красиво смотрелся рядом с WhatsApp."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["WhatsApp"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+        allow_latin_inside: ["WhatsApp"]
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_whatsapp_phrase"
+
+  - id: "telegram_phrases"
+    count: 10000
+    batch_size: 20
+    diversity_profile: "work_tts_ru"
+    dedup_profile: "tts_phrase_global"
+    goal: "Естественные русские TTS-фразы про рабочие коммуникации, продажи, CRM или поддержку с обязательным точным упоминанием Telegram."
+    examples:
+      positive:
+        - "Попроси оператора ответить клиенту в Telegram до конца рабочего дня."
+        - "Уведомление в Telegram поможет менеджеру не пропустить новую заявку."
+      negative:
+        - "телега пришла."
+        - "В лесу было тихо, и Telegram лежал на траве."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["Telegram"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+        allow_latin_inside: ["Telegram"]
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_telegram_phrase"
+
+  - id: "max_phrases"
+    count: 10000
+    batch_size: 20
+    diversity_profile: "work_tts_ru"
+    dedup_profile: "tts_phrase_global"
+    goal: "Естественные русские TTS-фразы про рабочие коммуникации, продажи, CRM или поддержку с обязательным точным упоминанием Max как канала сообщений."
+    examples:
+      positive:
+        - "Проверь, пришло ли сообщение в Max от нового клиента."
+        - "Через Max можно быстро напомнить менеджеру о срочной заявке."
+      negative:
+        - "Макс позвонил клиенту."
+        - "Max стоял у окна и смотрел на погоду."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["Max"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+        allow_latin_inside: ["Max"]
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_max_phrase"
