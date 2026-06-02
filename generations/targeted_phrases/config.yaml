@@ -1,0 +1,223 @@
+run:
+  name: "targeted_phrase_generation"
+  random_seed: 42
+  resume: true
+  prompts_per_cycle: 4
+  max_requests_per_rule: 20000
+  max_consecutive_empty_cycles: 120
+
+api:
+  base_url: "https://api.example.com/v1"
+  endpoint: "/chat/completions"
+  model: "example-model"
+  api_key_env: "OPENAI_API_KEY"
+  timeout_sec: 120
+  max_retries: 3
+  retry_sleep_sec: 2
+  concurrency: 4
+  headers: {}
+
+sampling:
+  temperature: 0.85
+  top_p: 0.9
+  max_tokens: 900
+  stop: []
+  extra_body: {}
+
+output:
+  base_dir: "./out"
+  flush_every: 100
+  report_filename: "report.json"
+  dataset_filename: "dataset.jsonl"
+  per_rule_dir: "per_rule"
+  rejection_sample_limit_per_rule: 200
+
+parser:
+  type: "json_array"
+
+prompts:
+  system_template_path: "./prompts/system.md"
+  user_template_path: "./prompts/user.md"
+  output_contract_template: |
+    Верни только валидный JSON-массив строк.
+    Не добавляй markdown, JSON-объекты, ключи, пояснения или комментарии.
+
+diversity_profiles:
+  natural_ru:
+    dimensions:
+      situation:
+        - "короткое рабочее высказывание"
+        - "бытовая просьба"
+        - "учебное пояснение"
+        - "туристический комментарий"
+        - "сообщение для голосового ассистента"
+        - "нейтральное уточнение"
+        - "напоминание"
+        - "короткая новостная формулировка"
+        - "служебное уведомление"
+        - "разговорная фраза"
+      intent:
+        - "уточнить"
+        - "сообщить"
+        - "попросить"
+        - "напомнить"
+        - "объяснить"
+        - "подтвердить"
+        - "предупредить"
+        - "согласовать"
+      syntax_shape:
+        - "короткое утверждение"
+        - "естественный вопрос"
+        - "мягкая просьба"
+        - "спокойное пояснение"
+        - "рабочее напоминание"
+      style:
+        - "разговорная речь"
+        - "нейтральная речь"
+        - "простая фраза без канцелярита"
+        - "фраза для произнесения вслух"
+    sample:
+      situation: 2
+      intent: 1
+      syntax_shape: 1
+      style: 1
+
+dedup_profiles:
+  targeted_phrase_text:
+    scope: "rule"
+    exact: true
+    normalization:
+      lowercase: true
+      collapse_spaces: true
+      trim_punctuation: true
+      replace_yo: true
+    prefix_limit:
+      enabled: true
+      words: 5
+      max_count: 8
+    ngram_similarity:
+      enabled: true
+      ngram: 3
+      threshold: 0.86
+      max_compare: 3000
+
+callbacks:
+  pre_extension: []
+  post_validation: []
+
+rules:
+  - id: "sahara_phrases"
+    count: 4000
+    batch_size: 20
+    diversity_profile: "natural_ru"
+    dedup_profile: "targeted_phrase_text"
+    goal: "Естественные русские TTS-фразы с обязательным точным словосочетанием пустыня Сахара."
+    examples:
+      positive:
+        - "На карте хорошо видна пустыня Сахара и соседние регионы."
+        - "Гид объяснил, почему пустыня Сахара так быстро остывает ночью."
+      negative:
+        - "Сахара находится далеко."
+        - "Сгенерируй фразу со словосочетанием пустыня Сахара."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["пустыня Сахара"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_sahara_phrase"
+
+  - id: "refuseniks_phrases"
+    count: 4000
+    batch_size: 20
+    diversity_profile: "natural_ru"
+    dedup_profile: "targeted_phrase_text"
+    goal: "Естественные русские TTS-фразы с обязательным точным словом отказников."
+    examples:
+      positive:
+        - "Список отказников обновили после повторной проверки заявок."
+        - "Координатор попросил отдельно отметить отказников в отчете."
+      negative:
+        - "Отказники требуют внимания."
+        - "Сгенерируй фразу со словом отказников."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["отказников"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_refuseniks_phrase"
+
+  - id: "question_check_phrases"
+    count: 4000
+    batch_size: 20
+    diversity_profile: "natural_ru"
+    dedup_profile: "targeted_phrase_text"
+    goal: "Естественные русские TTS-фразы, которые заканчиваются одной из вопросительных постановок: Окей?, Хорошо?, Договорились?, Алло?, Понятно?"
+    examples:
+      positive:
+        - "Я отправлю документы после проверки, Окей?"
+        - "Давайте созвонимся ближе к вечеру, Договорились?"
+      negative:
+        - "Окей."
+        - "Сгенерируй фразу с вопросом Хорошо?"
+    checks:
+      - type: "word_count_between"
+        min: 5
+        max: 18
+      - type: "require_contains_any"
+        values: ["Окей?", "Хорошо?", "Договорились?", "Алло?", "Понятно?"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 14
+        max_latin_chars: 0
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_question_check_phrase"
+
+  - id: "one_c_phrases"
+    count: 4000
+    batch_size: 20
+    diversity_profile: "natural_ru"
+    dedup_profile: "targeted_phrase_text"
+    goal: "Естественные русские TTS-фразы про рабочие задачи, учет, продажи или поддержку с обязательным точным упоминанием 1С."
+    examples:
+      positive:
+        - "Проверь, выгрузились ли новые счета из 1С без ошибок."
+        - "Бухгалтер попросил обновить карточку клиента в 1С."
+      negative:
+        - "1C помогает с учетом."
+        - "Сгенерируй фразу со словом 1С."
+    checks:
+      - type: "word_count_between"
+        min: 6
+        max: 18
+      - type: "require_contains_any"
+        values: ["1С"]
+        case_sensitive: true
+      - type: "russian_text"
+        min_cyrillic_chars: 18
+        max_latin_chars: 0
+      - type: "not_instruction_echo"
+    callbacks:
+      post_validation:
+        - path: "./callbacks.py"
+          function: "validate_one_c_phrase"
