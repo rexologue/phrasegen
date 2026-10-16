@@ -1430,6 +1430,8 @@ erl_crash.dump
 !include
 
 # Example outputs
-*output/
+generations/
+!generations/phone_extraction
+!generations/targeted_phrases
+!generations/whats_app/
 
-*real.yaml
